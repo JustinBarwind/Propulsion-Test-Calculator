@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from scipy.integrate import trapezoid
 import glob
 from datetime import datetime
+from motor_config import motors
 
 
 # =========================================================
@@ -144,11 +145,11 @@ def batch_analyze(folder_path):
 
     return summary
 
-prop_mass_lb = motor_mass
-
 summary["isp"] = summary["impulse"].apply(
     lambda x: calculate_isp(x, prop_mass_lb)
 )
+
+summary = pd.DataFrame(results)
 
 
 # =========================================================
@@ -285,7 +286,7 @@ def live_thrust_stream(port="COM3", baud=115200):
 
     return times, thrusts
 
-def calculate_isp(impulse_lbf_s, propellant_mass_kg):
+def calculate_isp(impulse_lbf_s, propellant_mass):
 
     g = 32.174
 
