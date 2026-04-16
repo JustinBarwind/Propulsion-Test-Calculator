@@ -53,11 +53,7 @@ def compute_uncertainty(thrust_clean, time):
 # ISP (IMPERIAL)
 # ===============================
 def calculate_isp(impulse_lbf_s, propellant_lbm):
-
-    g0 = 32.174
-    weight = propellant_lbm * g0 / g0
-
-    return impulse_lbf_s / weight
+    return impulse_lbf_s / propellant_lbm
 
 
 # ===============================
@@ -80,7 +76,7 @@ def analyze_thrust(df):
 
     peak = np.max(thrust_active)
     burn_time = time[end] - time[start]
-    impulse = trapezoid(thrust_clean, time)
+    impulse = trapezoid(thrust_active, time[start:end])
     avg = impulse / burn_time if burn_time > 0 else 0
 
     peak_unc, impulse_unc = compute_uncertainty(thrust_clean, time)
@@ -117,4 +113,8 @@ def batch_analyze(folder_path, motor_key):
 
         results.append(res)
 
-    return pd.DataFrame(results)
+        df = pd.DataFrame(results)
+
+    if df.empty:
+        print("No valid test data.")
+        return df
