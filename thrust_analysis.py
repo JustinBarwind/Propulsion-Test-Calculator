@@ -12,6 +12,8 @@ def load_file(file):
     df = pd.read_csv(file)
     df.columns = ["time_ms", "raw", "thrust_lbf"]
     df["time_s"] = df["time_ms"] / 1000.0
+    df = df[df["time_s"] <= 2.0]
+
     return df
 
 
@@ -20,20 +22,26 @@ def load_file(file):
 # ===============================
 def detect_burn_window(time, thrust_clean):
 
+    # Smooth signal slightly
     smooth = pd.Series(thrust_clean).rolling(5, center=True).mean().fillna(0).values
 
-    baseline = np.median(smooth[:100])
-    signal = np.abs(smooth - baseline)
+    # Compute derivative (rate of change)
+    deriv = np.gradient(smooth)
 
-    threshold = np.std(signal[:100]) * 3
+    # Burn START = rapid rise
+    start_candidates = np.where(deriv > np.max(deriv) * 0.3)[0]
 
-    active = signal > threshold
+    # Burn END = where signal collapses
+    end_candidates = np.where(smooth < np.max(smooth) * 0.1)[0]
 
-    if not np.any(active):
+    if len(start_candidates) == 0 or len(end_candidates) == 0:
         return None, None
 
-    start = np.argmax(active)
-    end = len(active) - np.argmax(active[::-1]) - 1
+    start = start_candidates[0]
+    end = end_candidates[-1]
+
+    if end <= start:
+        return None, None
 
     return start, end
 
@@ -61,13 +69,28 @@ def calculate_isp(impulse_lbf_s, propellant_lbm):
 # ===============================
 def analyze_thrust(df):
 
+    if "true_burn_time" in df.columns:
+        return {
+            "peak_thrust": np.max(df["thrust_lbf"]),
+            "burn_time": df["true_burn_time"].iloc[0],
+            "impulse": np.trapz(df["thrust_lbf"], df["time_s"]),
+            "avg_thrust": np.mean(df["thrust_lbf"]),
+            "peak_unc": 0,
+            "impulse_unc": 0
+        }
+
     time = df["time_s"].values
     thrust = df["thrust_lbf"].values
 
     baseline = np.median(thrust[:100])
     thrust_clean = thrust - baseline
+    thrust[t > burn_time] = 0
 
     start, end = detect_burn_window(time, thrust_clean)
+
+    print("DEBUG start:", start)
+    print("DEBUG end:", end)
+    print("DEBUG time range:", time[0], "→", time[-1])
 
     if start is None:
         return None
@@ -96,12 +119,13 @@ def analyze_thrust(df):
 # ===============================
 def batch_analyze(folder_path, motor_key):
 
-    files = glob.glob(folder_path + "/*.csv")
+    files = glob.glob(folder_path + f"/test_{motor_key[-1]}_*.csv")
     results = []
 
     prop_mass = motors[motor_key]["propellant_mass_lb"]
 
     for f in files:
+
         df = load_file(f)
         res = analyze_thrust(df)
 
@@ -113,8 +137,50 @@ def batch_analyze(folder_path, motor_key):
 
         results.append(res)
 
-        df = pd.DataFrame(results)
+    # CREATE FINAL DATAFRAME AFTER LOOP
+    summary_df = pd.DataFrame(results)
 
-    if df.empty:
-        print("No valid test data.")
-        return df
+    if summary_df.empty:
+        return None
+
+    return summary_df
+
+def compare_motors(folder_path):
+
+    all_results = []
+
+    for motor_key in ["Motor_A", "Motor_B", "Motor_C"]:
+
+        files = glob.glob(folder_path + f"/test_{motor_key[-1]}_*.csv")
+        prop_mass = motors[motor_key]["propellant_mass_lb"]
+
+        results = []
+
+        for f in files:
+            df = load_file(f)
+            res = analyze_thrust(df)
+
+            if res is None:
+                continue
+
+            res["isp"] = calculate_isp(res["impulse"], prop_mass)
+            results.append(res)
+
+        if len(results) == 0:
+            continue
+
+        df_motor = pd.DataFrame(results)
+
+        summary = {
+            "motor": motor_key,
+            "avg_isp": df_motor["isp"].mean(),
+            "avg_peak_thrust": df_motor["peak_thrust"].mean(),
+            "avg_impulse": df_motor["impulse"].mean(),
+            "avg_burn_time": df_motor["burn_time"].mean()
+        }
+
+        all_results.append(summary)
+
+    leaderboard = pd.DataFrame(all_results)
+
+    return leaderboard.sort_values(by="avg_isp", ascending=False)
